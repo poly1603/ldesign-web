@@ -5,8 +5,20 @@
   "description": "LDesign Web UI - CLI工具的Web界面",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "bin": {
+    "ldesign-web-dev": "./bin/dev.mjs",
+    "ldesign-web-start": "./bin/start.mjs"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
   "scripts": {
-    "build": "vite build",
+    "build": "pnpm build:node && pnpm build:frontend",
+    "build:node": "tsup",
+    "build:frontend": "vite build",
     "dev": "vite",
     "preview": "vite preview",
     "clean": "rimraf dist"
@@ -21,14 +33,22 @@
   "author": "LDesign Team",
   "license": "MIT",
   "dependencies": {
+    "@ldesign/shared": "workspace:*",
+    "lucide-vue-next": "^0.552.0",
+    "pinia": "^2.1.0",
+    "socket.io-client": "^4.7.0",
     "vue": "^3.5.0",
-    "@ldesign/shared": "workspace:*"
+    "vue-router": "^4.2.0"
   },
   "devDependencies": {
-    "@vitejs/plugin-vue": "^5.0.0",
     "@types/node": "^20.0.0",
+    "@vitejs/plugin-vue": "^5.0.0",
+    "autoprefixer": "^10.4.16",
+    "postcss": "^8.4.32",
+    "rimraf": "^5.0.5",
+    "tailwindcss": "^3.4.0",
+    "tsup": "^8.0.0",
     "typescript": "^5.7.3",
-    "vite": "^5.0.0",
-    "rimraf": "^5.0.5"
+    "vite": "^5.0.0"
   }
 }

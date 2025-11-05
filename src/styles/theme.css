@@ -1,0 +1,79 @@
+/**
+ * 主题 CSS 变量
+ * 整合 themes/color.css 和 themes/size.css，并添加主题相关的变量
+ */
+
+/* 引入主题变量 */
+@import '../../themes/color.css';
+@import '../../themes/size.css';
+
+/* 主题色变量 */
+:root {
+  /* 默认主题色（蓝色） */
+  --theme-color-primary: #1890ff;
+  --theme-color-primary-hover: #40a9ff;
+  --theme-color-primary-active: #096dd9;
+  --theme-color-primary-light: #e6f7ff;
+  
+  /* 字体大小缩放比例 */
+  --theme-font-size-scale: 1;
+  
+  /* 侧边栏变量 */
+  --sidebar-width: 240px;
+  --sidebar-width-collapsed: 64px;
+  --sidebar-transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  --sidebar-bg: var(--color-bg-container);
+  --sidebar-border: var(--color-border-light);
+  --sidebar-item-hover-bg: var(--color-bg-component-hover);
+  --sidebar-item-active-bg: var(--color-primary-light);
+  --sidebar-item-active-color: var(--theme-color-primary);
+  --sidebar-text-color: var(--color-text-primary);
+  --sidebar-text-secondary: var(--color-text-secondary);
+  
+  /* 头部变量 */
+  --header-height: 64px;
+  --header-bg: var(--color-bg-container);
+  --header-border: var(--color-border-light);
+  --header-text-color: var(--color-text-primary);
+  
+  /* 内容区域变量 */
+  --content-bg: var(--color-bg-page);
+  --content-padding: var(--size-spacing-lg);
+  
+  /* 阴影变量 */
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.06);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.12);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.16);
+  
+  /* 字体大小（根据缩放比例计算） */
+  --font-size-base: calc(14px * var(--theme-font-size-scale));
+  --font-size-sm: calc(12px * var(--theme-font-size-scale));
+  --font-size-lg: calc(16px * var(--theme-font-size-scale));
+  --font-size-xl: calc(18px * var(--theme-font-size-scale));
+  --font-size-2xl: calc(20px * var(--theme-font-size-scale));
+}
+
+/* 暗黑模式覆盖 */
+:root[data-theme-mode='dark'] {
+  --sidebar-bg: var(--color-bg-container);
+  --sidebar-border: var(--color-border);
+  --sidebar-item-hover-bg: var(--color-bg-component-hover);
+  --sidebar-item-active-bg: rgba(24, 144, 255, 0.15);
+  --header-bg: var(--color-bg-container);
+  --header-border: var(--color-border);
+  --content-bg: var(--color-bg-page);
+  
+  /* 卡片阴影在暗黑模式下更深 */
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+/* 侧边栏折叠状态 - 使用类选择器确保生效 */
+.system-layout[data-sidebar-collapsed='true'] {
+  --sidebar-width: var(--sidebar-width-collapsed);
+}
+
+.system-layout.sidebar-collapsed {
+  --sidebar-width: var(--sidebar-width-collapsed);
+}
+
