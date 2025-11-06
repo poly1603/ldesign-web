@@ -356,85 +356,100 @@ async function handleStart() {
   if (!projectId || isRunning.value) return
 
   loading.value = true
+  
+  // 清空控制台并显示启动信息
   consoleRef.value?.clear()
-  consoleRef.value?.appendInfo('正在启动项目...\n')
-
+  consoleRef.value?.appendInfo('🚀 正在启动项目...\n')
+  serviceUrl.value = null // 清空服务地址
+  
   try {
-    // 确保 WebSocket 已连接（快速检查，不阻塞）
+    // 确保 WebSocket 已连接
     if (!appStore.socket || !appStore.isConnected) {
-      console.log('[Start] WebSocket 未连接，正在连接...')
+      consoleRef.value?.appendInfo('📡 正在连接 WebSocket...\n')
       appStore.connectWebSocket()
-      // 简单等待一下，不阻塞太久
-      await new Promise<void>((resolve) => {
-        if (appStore.isConnected) {
+      // 等待连接建立（最多等待 2 秒）
+      await new Promise<void>((resolve, reject) => {
+        if (appStore.isConnected && appStore.socket?.connected) {
+          consoleRef.value?.appendInfo('✅ WebSocket 连接成功\n')
           resolve()
-        } else {
-          const checkInterval = setInterval(() => {
-            if (appStore.isConnected) {
-              clearInterval(checkInterval)
-              resolve()
-            }
-          }, 50) // 更频繁检查
-          setTimeout(() => {
-            clearInterval(checkInterval)
-            resolve() // 500ms 后继续，不等待
-          }, 500)
+          return
         }
+        
+        let attempts = 0
+        const maxAttempts = 40 // 最多等待 2 秒 (40 * 50ms)
+        const checkInterval = setInterval(() => {
+          attempts++
+          if (appStore.isConnected && appStore.socket?.connected) {
+            clearInterval(checkInterval)
+            consoleRef.value?.appendInfo('✅ WebSocket 连接成功\n')
+            resolve()
+          } else if (attempts >= maxAttempts) {
+            clearInterval(checkInterval)
+            reject(new Error('WebSocket 连接超时'))
+          }
+        }, 50)
       })
     }
 
-    if (!appStore.socket) {
+    if (!appStore.socket || !appStore.socket.connected) {
       throw new Error('WebSocket 连接失败')
     }
 
     const tempSocket = appStore.socket
     const tempRoom = `project:${projectId}:command:dev`
     
-    // 关键修复：先绑定监听器并加入房间，再启动命令
-    // 这样可以确保不会错过任何日志
-    console.log(`[Start] 准备连接 WebSocket 房间: ${tempRoom}`)
+    consoleRef.value?.appendInfo(`📡 正在加入日志房间: ${tempRoom}\n`)
     
     // 先定义监听器（使用临时变量存储 executionId，稍后更新）
     let tempExecutionId: string | null = null
+    let hasReceivedFirstLog = false
     
     handleOutput = (data: { executionId: string; data: string; serviceUrl?: string }) => {
-      console.log(`[WebSocket] 收到 command:output: executionId=${data.executionId}, dataLength=${data.data?.length || 0}, currentExecutionId=${executionId.value || tempExecutionId}`)
-      // 如果 executionId 还没设置，先接收所有日志（避免错过早期日志）
       const targetId = executionId.value || tempExecutionId
+      // 如果 executionId 还没设置，先接收所有日志（避免错过早期日志）
       if (!targetId || data.executionId === targetId) {
+        if (!hasReceivedFirstLog && data.data.trim()) {
+          hasReceivedFirstLog = true
+        }
+        // 实时显示日志
         consoleRef.value?.appendStdout(data.data)
+        
+        // 更新服务地址
         if (data.serviceUrl) {
           serviceUrl.value = data.serviceUrl
-          console.log(`[WebSocket] 更新服务地址: ${data.serviceUrl}`)
+          consoleRef.value?.appendInfo(`\n✅ 服务已启动: ${data.serviceUrl}\n`)
         }
-      } else {
-        console.warn(`[WebSocket] executionId 不匹配: 期望 ${targetId}, 收到 ${data.executionId}`)
       }
     }
 
     handleError = (data: { executionId: string; data: string }) => {
-      console.log(`[WebSocket] 收到 command:error: executionId=${data.executionId}, dataLength=${data.data?.length || 0}`)
       const targetId = executionId.value || tempExecutionId
       if (!targetId || data.executionId === targetId) {
         consoleRef.value?.appendStderr(data.data)
-      } else {
-        console.warn(`[WebSocket] executionId 不匹配: 期望 ${targetId}, 收到 ${data.executionId}`)
       }
     }
 
     handleStatus = (data: { executionId: string; status: string; serviceUrl?: string }) => {
-      console.log(`[WebSocket] 收到 command:status:`, data)
       const targetId = executionId.value || tempExecutionId
       if (!targetId || data.executionId === targetId) {
-        if (data.status === 'stopped' || data.status === 'completed' || data.status === 'failed') {
+        if (data.status === 'running') {
+          isRunning.value = true
+        } else if (data.status === 'stopped' || data.status === 'completed' || data.status === 'failed') {
           isRunning.value = false
+          if (data.status === 'completed') {
+            consoleRef.value?.appendInfo('\n✅ 命令执行完成\n')
+          } else if (data.status === 'failed') {
+            consoleRef.value?.appendError('\n❌ 命令执行失败\n')
+          } else {
+            consoleRef.value?.appendInfo('\n⏹️  命令已停止\n')
+          }
         }
+        
+        // 更新服务地址（优先从 status 事件获取）
         if (data.serviceUrl) {
           serviceUrl.value = data.serviceUrl
-          console.log(`[WebSocket] 更新服务地址: ${data.serviceUrl}`)
+          consoleRef.value?.appendInfo(`\n✅ 服务已启动: ${data.serviceUrl}\n`)
         }
-      } else {
-        console.warn(`[WebSocket] executionId 不匹配: 期望 ${targetId}, 收到 ${data.executionId}`)
       }
     }
 
@@ -449,50 +464,96 @@ async function handleStart() {
     // 立即加入房间（在启动命令之前）
     room = tempRoom
     socket = tempSocket
-    tempSocket.emit('joinRoom', { room: tempRoom })
-    console.log(`[Start] 已发送加入房间请求: ${tempRoom}, socket.connected: ${tempSocket.connected}`)
     
-    // 等待一小段时间确保房间已加入，然后启动命令
-    await new Promise(resolve => setTimeout(resolve, 100))
+    // 加入房间并等待确认
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error('加入房间超时'))
+      }, 3000)
+      
+      const handleJoinedRoom = (data: any) => {
+        if (data?.room === tempRoom) {
+          clearTimeout(timeout)
+          tempSocket.off('joinedRoom', handleJoinedRoom)
+          consoleRef.value?.appendInfo('✅ 已加入日志房间，开始接收实时日志...\n')
+          resolve()
+        }
+      }
+      
+      tempSocket.on('joinedRoom', handleJoinedRoom)
+      tempSocket.emit('joinRoom', { room: tempRoom }, (response: any) => {
+        if (response?.event === 'joinedRoom' || (response?.data && response.data.room === tempRoom)) {
+          clearTimeout(timeout)
+          tempSocket.off('joinedRoom', handleJoinedRoom)
+          consoleRef.value?.appendInfo('✅ 已加入日志房间，开始接收实时日志...\n')
+          resolve()
+        }
+      })
+    })
     
-    // 现在启动项目（此时监听器已经绑定，房间已加入）
-    console.log(`[Start] 开始启动命令...`)
+    // 启动项目（此时监听器已经绑定，房间已加入）
+    consoleRef.value?.appendInfo('⚡ 正在执行启动命令...\n\n')
     const response = await projectApi.executeCommand(projectId, 'dev')
+    
     if (response.success && response.data) {
       executionId.value = response.data.id
       tempExecutionId = response.data.id
       isRunning.value = true
-      console.log(`[Start] 命令执行 ID: ${response.data.id}`)
-      consoleRef.value?.appendInfo(`命令执行 ID: ${response.data.id}\n`)
       
-      // 如果有初始输出，显示
+      consoleRef.value?.appendInfo(`📝 执行 ID: ${response.data.id}\n`)
+      
+      // 如果有初始输出，立即显示
       if (response.data.output) {
         consoleRef.value?.appendStdout(response.data.output)
       }
+      
+      // 如果有初始服务地址，立即显示
       if (response.data.serviceUrl) {
         serviceUrl.value = response.data.serviceUrl
-        console.log(`[Start] 初始服务地址: ${response.data.serviceUrl}`)
+        consoleRef.value?.appendInfo(`\n✅ 服务地址: ${response.data.serviceUrl}\n`)
       }
       
-      // 立即加载最新日志（以防有遗漏）
-      setTimeout(() => {
-        loadLatestLogs()
-      }, 500)
+      // 启动定期检查日志作为兜底机制（每 2 秒检查一次）
+      if (logCheckInterval) {
+        clearInterval(logCheckInterval)
+      }
+      logCheckInterval = setInterval(() => {
+        if (isRunning.value && executionId.value) {
+          loadLatestLogs()
+        } else {
+          if (logCheckInterval) {
+            clearInterval(logCheckInterval)
+            logCheckInterval = null
+          }
+        }
+      }, 2000)
       
-      // 不再需要定期轮询，完全依赖 WebSocket 实时推送
-      // 只在 WebSocket 连接失败时作为兜底机制使用
+      // 3 秒后再次检查服务地址（有些服务启动较慢）
+      setTimeout(() => {
+        if (isRunning.value && !serviceUrl.value) {
+          loadLatestLogs()
+        }
+      }, 3000)
     } else {
       throw new Error(response.message || '启动失败')
     }
   } catch (error: any) {
     console.error('启动项目失败:', error)
-    consoleRef.value?.appendError(`启动失败: ${error.message || '未知错误'}\n`)
+    consoleRef.value?.appendError(`\n❌ 启动失败: ${error.message || '未知错误'}\n`)
     isRunning.value = false
+    serviceUrl.value = null
+    
     // 清理监听器
     if (appStore.socket) {
       appStore.socket.off('command:output', handleOutput)
       appStore.socket.off('command:error', handleError)
       appStore.socket.off('command:status', handleStatus)
+    }
+    
+    // 清理定时器
+    if (logCheckInterval) {
+      clearInterval(logCheckInterval)
+      logCheckInterval = null
     }
   } finally {
     loading.value = false
