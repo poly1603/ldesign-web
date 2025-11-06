@@ -34,13 +34,24 @@
           </div>
 
           <!-- 服务地址 -->
-          <div v-if="serviceUrl" class="service-section">
+          <div v-if="serviceUrls.length > 0" class="service-section">
             <h3>服务地址</h3>
-            <div class="service-url">
-              <a :href="serviceUrl" target="_blank" rel="noopener noreferrer">
-                {{ serviceUrl }}
-                <ExternalLink :size="14" />
-              </a>
+            <div class="service-urls">
+              <div
+                v-for="(url, index) in serviceUrls"
+                :key="index"
+                class="service-url-item"
+              >
+                <a :href="url" target="_blank" rel="noopener noreferrer">
+                  {{ url }}
+                  <ExternalLink :size="14" />
+                </a>
+              </div>
+            </div>
+            <!-- 二维码 -->
+            <div v-if="primaryServiceUrl" class="qr-code-container">
+              <canvas ref="qrCodeCanvas" class="qr-code-canvas"></canvas>
+              <div class="qr-code-label">扫码访问</div>
             </div>
           </div>
         </div>
@@ -55,13 +66,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeft, Play, Square, ExternalLink } from 'lucide-vue-next'
 import { projectApi } from '../api/services'
 import { useAppStore } from '../stores/app'
 import Console from '../components/Console.vue'
 import type { Socket } from 'socket.io-client'
+import QRCode from 'qrcode'
 
 const route = useRoute()
 const router = useRouter()
@@ -69,11 +81,204 @@ const appStore = useAppStore()
 
 const loading = ref(false)
 const isRunning = ref(false)
-const serviceUrl = ref<string | null>(null)
+const serviceUrls = ref<string[]>([]) // 存储所有服务地址
 const executionId = ref<string | null>(null)
 const consoleRef = ref<InstanceType<typeof Console> | null>(null)
+const qrCodeCanvas = ref<HTMLCanvasElement | null>(null)
 let socket: Socket | null = null
 let room: string | null = null
+
+// 计算主要服务地址（用于二维码，优先使用 network IP）
+const primaryServiceUrl = ref<string | null>(null)
+
+/**
+ * 标准化 URL（统一格式以便比较）
+ */
+function normalizeUrl(url: string): string {
+  if (!url) return ''
+  
+  // 先清理 URL
+  url = cleanUrl(url)
+  
+  // 移除末尾斜杠，转换为小写，移除空格
+  url = url.replace(/\/+$/, '').toLowerCase().trim()
+  
+  // 统一协议格式（确保都是 http:// 或 https://）
+  url = url.replace(/^(https?:\/\/)?/i, (match) => {
+    return match || 'http://'
+  })
+  
+  return url
+}
+
+/**
+ * 添加服务地址（去重）
+ */
+function addServiceUrl(url: string) {
+  if (!url) return
+  
+  // 先清理 URL（移除 ANSI 转义码等），确保完全干净
+  url = cleanUrl(url)
+  if (!url) return
+  
+  // 确保 URL 有协议前缀
+  if (!url.startsWith('http://') && !url.startsWith('https://')) {
+    url = `http://${url}`
+  }
+  
+  // 验证 URL 格式是否正确
+  try {
+    // 尝试解析 URL，如果无效则忽略
+    new URL(url)
+  } catch {
+    // URL 格式无效，忽略
+    return
+  }
+  
+  // 检查是否已存在（使用标准化后的 URL 比较）
+  const normalizedUrl = normalizeUrl(url)
+  if (!normalizedUrl) return
+  
+  const exists = serviceUrls.value.some(existingUrl => {
+    const existingNormalized = normalizeUrl(existingUrl)
+    return existingNormalized === normalizedUrl
+  })
+  
+  if (exists) return
+  
+  // 添加到数组（确保是清理后的 URL）
+  serviceUrls.value.push(url)
+  
+  // 更新主要服务地址（优先使用 network IP，然后是 localhost）
+  if (!primaryServiceUrl.value) {
+    primaryServiceUrl.value = url
+  } else {
+    // 如果新地址是 network IP，优先使用它
+    const isNetwork = /^(http[s]?:\/\/)?(192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.)/i.test(url)
+    const currentIsNetwork = /^(http[s]?:\/\/)?(192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.)/i.test(primaryServiceUrl.value)
+    if (isNetwork && !currentIsNetwork) {
+      primaryServiceUrl.value = url
+    }
+  }
+  
+  // 生成二维码
+  nextTick(() => {
+    generateQRCode()
+  })
+}
+
+/**
+ * 清理 ANSI 转义码和多余字符
+ */
+function cleanUrl(url: string): string {
+  if (!url) return ''
+  
+  // 移除所有 ANSI 转义码（包括各种格式）
+  // \x1b[ 或 \u001b[ 开头的控制序列
+  url = url.replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-PR-TZcf-nqry=><]/g, '')
+  
+  // 移除末尾的斜杠和空白字符
+  url = url.replace(/\/+$/, '').trim()
+  
+  // 移除 URL 中的控制字符（包括不可见字符）
+  url = url.replace(/[\x00-\x1F\x7F]/g, '')
+  
+  // 再次确保移除可能的残留转义码
+  url = url.replace(/\[[0-9;]*m/g, '')
+  
+  return url
+}
+
+/**
+ * 从日志中解析服务地址
+ */
+function parseServiceUrlsFromLog(log: string) {
+  const urls: string[] = []
+  const seenUrls = new Set<string>()
+  
+  // 匹配 Vite Local 格式: Local: http://localhost:5176/
+  const viteLocalMatch = log.match(/Local:\s*(http[s]?:\/\/[^\s\[\]]+)/i)
+  if (viteLocalMatch) {
+    const url = cleanUrl(viteLocalMatch[1])
+    const normalizedUrl = normalizeUrl(url)
+    if (url && normalizedUrl && !seenUrls.has(normalizedUrl)) {
+      urls.push(url)
+      seenUrls.add(normalizedUrl)
+    }
+  }
+  
+  // 匹配 Vite Network 格式: Network: http://192.168.x.x:5176/
+  const viteNetworkMatch = log.match(/Network:\s*(http[s]?:\/\/[^\s\[\]]+)/i)
+  if (viteNetworkMatch) {
+    const url = cleanUrl(viteNetworkMatch[1])
+    const normalizedUrl = normalizeUrl(url)
+    if (url && normalizedUrl && !seenUrls.has(normalizedUrl)) {
+      urls.push(url)
+      seenUrls.add(normalizedUrl)
+    }
+  }
+  
+  // 匹配通用端口格式: localhost:5176 或 127.0.0.1:5176
+  const portMatch = log.match(/(?:http[s]?:\/\/)?(?:localhost|127\.0\.0\.1|0\.0\.0\.0)[:\s]+(\d+)/)
+  if (portMatch) {
+    const port = portMatch[1]
+    const url = `http://localhost:${port}`
+    const normalizedUrl = normalizeUrl(url)
+    if (normalizedUrl && !seenUrls.has(normalizedUrl)) {
+      urls.push(url)
+      seenUrls.add(normalizedUrl)
+    }
+  }
+  
+  // 匹配其他格式的 URL（但不包括已有格式）
+  const otherMatches = log.matchAll(/http[s]?:\/\/[^\s\[\]]+/g)
+  for (const match of otherMatches) {
+    let url = cleanUrl(match[0])
+    
+    // 只处理有效的服务地址
+    if (url && (
+      url.includes('localhost') || 
+      url.includes('127.0.0.1') || 
+      /^(http[s]?:\/\/)?(192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.)/i.test(url)
+    )) {
+      // 使用标准化后的 URL 进行比较
+      const normalizedUrl = normalizeUrl(url)
+      if (normalizedUrl && !seenUrls.has(normalizedUrl)) {
+        urls.push(url) // 保存清理后的原始格式
+        seenUrls.add(normalizedUrl)
+      }
+    }
+  }
+  
+  return urls
+}
+
+/**
+ * 生成二维码
+ */
+async function generateQRCode() {
+  if (!primaryServiceUrl.value || !qrCodeCanvas.value) return
+  
+  try {
+    await QRCode.toCanvas(qrCodeCanvas.value, primaryServiceUrl.value, {
+      width: 200,
+      margin: 2,
+      color: {
+        dark: '#000000',
+        light: '#FFFFFF',
+      },
+    })
+  } catch (error) {
+    console.error('生成二维码失败:', error)
+  }
+}
+
+// 监听主要服务地址变化，更新二维码
+watch(primaryServiceUrl, () => {
+  nextTick(() => {
+    generateQRCode()
+  })
+})
 
 // 事件处理器函数引用（用于正确移除监听器）
 let handleOutput: ((data: { executionId: string; data: string; serviceUrl?: string }) => void) | null = null
@@ -114,8 +319,8 @@ async function loadLatestLogs() {
         }
       }
       
-      if (execution.serviceUrl && !serviceUrl.value) {
-        serviceUrl.value = execution.serviceUrl
+      if (execution.serviceUrl) {
+        addServiceUrl(execution.serviceUrl)
       }
     }
   } catch (error) {
@@ -360,7 +565,8 @@ async function handleStart() {
   // 清空控制台并显示启动信息
   consoleRef.value?.clear()
   consoleRef.value?.appendInfo('🚀 正在启动项目...\n')
-  serviceUrl.value = null // 清空服务地址
+  serviceUrls.value = [] // 清空服务地址
+  primaryServiceUrl.value = null
   
   try {
     // 确保 WebSocket 已连接
@@ -414,10 +620,13 @@ async function handleStart() {
         // 实时显示日志
         consoleRef.value?.appendStdout(data.data)
         
-        // 更新服务地址
+        // 从日志中解析服务地址
+        const parsedUrls = parseServiceUrlsFromLog(data.data)
+        parsedUrls.forEach(url => addServiceUrl(url))
+        
+        // 更新服务地址（如果直接提供了，需要清理）
         if (data.serviceUrl) {
-          serviceUrl.value = data.serviceUrl
-          consoleRef.value?.appendInfo(`\n✅ 服务已启动: ${data.serviceUrl}\n`)
+          addServiceUrl(data.serviceUrl)
         }
       }
     }
@@ -447,8 +656,11 @@ async function handleStart() {
         
         // 更新服务地址（优先从 status 事件获取）
         if (data.serviceUrl) {
-          serviceUrl.value = data.serviceUrl
-          consoleRef.value?.appendInfo(`\n✅ 服务已启动: ${data.serviceUrl}\n`)
+          const cleanedUrl = cleanUrl(data.serviceUrl)
+          if (cleanedUrl) {
+            addServiceUrl(cleanedUrl)
+            consoleRef.value?.appendInfo(`\n✅ 服务已启动: ${cleanedUrl}\n`)
+          }
         }
       }
     }
@@ -509,8 +721,14 @@ async function handleStart() {
       
       // 如果有初始服务地址，立即显示
       if (response.data.serviceUrl) {
-        serviceUrl.value = response.data.serviceUrl
+        addServiceUrl(response.data.serviceUrl)
         consoleRef.value?.appendInfo(`\n✅ 服务地址: ${response.data.serviceUrl}\n`)
+      }
+      
+      // 从初始输出中解析服务地址
+      if (response.data.output) {
+        const parsedUrls = parseServiceUrlsFromLog(response.data.output)
+        parsedUrls.forEach(url => addServiceUrl(url))
       }
       
       // 启动定期检查日志作为兜底机制（每 2 秒检查一次）
@@ -541,7 +759,8 @@ async function handleStart() {
     console.error('启动项目失败:', error)
     consoleRef.value?.appendError(`\n❌ 启动失败: ${error.message || '未知错误'}\n`)
     isRunning.value = false
-    serviceUrl.value = null
+    serviceUrls.value = []
+    primaryServiceUrl.value = null
     
     // 清理监听器
     if (appStore.socket) {
@@ -576,7 +795,8 @@ async function handleStop() {
       isRunning.value = false
       const stoppedExecutionId = executionId.value
       executionId.value = null
-      serviceUrl.value = null
+      serviceUrls.value = []
+      primaryServiceUrl.value = null
       
       // 离开房间
       leaveRoom()
@@ -613,7 +833,8 @@ async function handleStop() {
     // 即使停止失败，也清除前端状态
     isRunning.value = false
     executionId.value = null
-    serviceUrl.value = null
+    serviceUrls.value = []
+    primaryServiceUrl.value = null
     leaveRoom()
   } finally {
     loading.value = false
@@ -635,7 +856,13 @@ async function checkRunningCommand() {
       // 恢复运行状态
       isRunning.value = true
       if (execution.serviceUrl) {
-        serviceUrl.value = execution.serviceUrl
+        addServiceUrl(execution.serviceUrl)
+      }
+      
+      // 从输出中解析服务地址
+      if (execution.output) {
+        const parsedUrls = parseServiceUrlsFromLog(execution.output)
+        parsedUrls.forEach(url => addServiceUrl(url))
       }
       
       // 清空控制台并显示历史输出
@@ -653,7 +880,8 @@ async function checkRunningCommand() {
       consoleRef.value?.clear()
       executionId.value = null
       isRunning.value = false
-      serviceUrl.value = null
+      serviceUrls.value = []
+      primaryServiceUrl.value = null
       consoleRef.value?.appendInfo('没有正在运行的命令\n')
     }
   } catch (error) {
@@ -823,7 +1051,14 @@ onUnmounted(() => {
   box-shadow: var(--shadow-md);
 }
 
-.service-url {
+.service-urls {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-spacing-sm);
+  margin-bottom: var(--size-spacing-lg);
+}
+
+.service-url-item {
   display: flex;
   align-items: center;
   gap: var(--size-spacing-xs);
@@ -831,21 +1066,54 @@ onUnmounted(() => {
   background: var(--color-bg-component);
   border: 1px solid var(--color-border-light);
   border-radius: var(--size-radius-sm);
+  transition: all 0.2s ease;
 }
 
-.service-url a {
+.service-url-item:hover {
+  background: var(--color-bg-component-hover);
+  border-color: var(--theme-color-primary);
+}
+
+.service-url-item a {
   display: flex;
   align-items: center;
   gap: var(--size-spacing-xs);
   color: var(--theme-color-primary);
   text-decoration: none;
   word-break: break-all;
+  font-size: var(--font-size-sm);
+  flex: 1;
   transition: color 0.2s ease;
 }
 
-.service-url a:hover {
+.service-url-item a:hover {
   color: var(--theme-color-primary-hover);
   text-decoration: underline;
+}
+
+.qr-code-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: var(--size-spacing-md);
+  background: var(--color-bg-component);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--size-radius-md);
+}
+
+.qr-code-canvas {
+  display: block;
+  background: white;
+  padding: var(--size-spacing-sm);
+  border-radius: var(--size-radius-sm);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.qr-code-label {
+  margin-top: var(--size-spacing-sm);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  font-weight: var(--size-font-weight-medium);
 }
 
 .console-panel {
