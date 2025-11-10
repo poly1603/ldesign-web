@@ -1,10 +1,10 @@
 <template>
-  <div class="w-full">
-    <label v-if="label" :for="id" class="block text-sm font-medium text-gray-700 mb-1">
+  <div class="input-wrapper">
+    <label v-if="label" :for="id" class="input-label">
       {{ label }}
-      <span v-if="required" class="text-danger">*</span>
+      <span v-if="required" class="input-required">*</span>
     </label>
-    <div class="relative">
+    <div class="input-container">
       <input
         :id="id"
         :type="type"
@@ -17,12 +17,12 @@
         @blur="handleBlur"
         @focus="handleFocus"
       />
-      <div v-if="$slots.suffix" class="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
+      <div v-if="$slots.suffix" class="input-suffix">
         <slot name="suffix"></slot>
       </div>
     </div>
-    <p v-if="error" class="mt-1 text-sm text-danger">{{ error }}</p>
-    <p v-else-if="hint" class="mt-1 text-sm text-gray-500">{{ hint }}</p>
+    <p v-if="error" class="input-error">{{ error }}</p>
+    <p v-else-if="hint" class="input-hint">{{ hint }}</p>
   </div>
 </template>
 
@@ -56,17 +56,17 @@ const emit = defineEmits<{
 }>()
 
 const inputClasses = computed(() => {
-  const baseClasses = 'block w-full px-4 py-2 text-gray-900 border rounded-lg focus:outline-none focus:ring-2 transition-colors duration-200'
+  const classes = ['input-field']
   
-  const stateClasses = props.error
-    ? 'border-danger focus:ring-danger focus:border-danger'
-    : 'border-gray-300 focus:ring-primary focus:border-primary'
+  if (props.error) {
+    classes.push('input-field--error')
+  }
   
-  const disabledClasses = props.disabled || props.readonly
-    ? 'bg-gray-100 cursor-not-allowed'
-    : 'bg-white'
+  if (props.disabled || props.readonly) {
+    classes.push('input-field--disabled')
+  }
   
-  return [baseClasses, stateClasses, disabledClasses].join(' ')
+  return classes.join(' ')
 })
 
 function handleInput(event: Event) {
@@ -83,6 +83,100 @@ function handleFocus(event: FocusEvent) {
   emit('focus', event)
 }
 </script>
+
+<style scoped>
+.input-wrapper {
+  width: 100%;
+}
+
+.input-label {
+  display: block;
+  font-size: var(--font-size-sm, 14px);
+  font-weight: var(--size-font-weight-medium, 500);
+  color: var(--color-text-primary, #1f2937);
+  margin-bottom: var(--size-spacing-xs, 8px);
+}
+
+.input-required {
+  color: var(--color-danger-default, #ef4444);
+  margin-left: 2px;
+}
+
+.input-container {
+  position: relative;
+}
+
+.input-field {
+  display: block;
+  width: 100%;
+  padding: var(--size-spacing-sm, 12px) var(--size-spacing-md, 16px);
+  font-size: var(--font-size-base, 14px);
+  color: var(--color-text-primary, #1f2937);
+  background: var(--color-bg-container, #ffffff);
+  border: 1px solid var(--color-border-light, #e5e7eb);
+  border-radius: var(--size-radius-md, 8px);
+  transition: all 0.2s ease;
+  outline: none;
+}
+
+.input-field::placeholder {
+  color: var(--color-text-tertiary, #9ca3af);
+}
+
+.input-field:focus {
+  border-color: var(--theme-color-primary, #3b82f6);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.input-field--error {
+  border-color: var(--color-danger-default, #ef4444);
+}
+
+.input-field--error:focus {
+  border-color: var(--color-danger-default, #ef4444);
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.1);
+}
+
+.input-field--disabled {
+  background: var(--color-bg-component, #f3f4f6);
+  color: var(--color-text-disabled, #9ca3af);
+  cursor: not-allowed;
+}
+
+.input-suffix {
+  position: absolute;
+  top: 50%;
+  right: var(--size-spacing-md, 16px);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.input-error {
+  margin-top: var(--size-spacing-xs, 8px);
+  font-size: var(--font-size-sm, 14px);
+  color: var(--color-danger-default, #ef4444);
+}
+
+.input-hint {
+  margin-top: var(--size-spacing-xs, 8px);
+  font-size: var(--font-size-sm, 14px);
+  color: var(--color-text-secondary, #6b7280);
+}
+</style>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

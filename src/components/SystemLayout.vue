@@ -84,7 +84,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { useRoute } from 'vue-router'
-import { LayoutDashboard, Settings, Server, ServerOff, Menu, FolderKanban } from 'lucide-vue-next'
+import { LayoutDashboard, Settings, Server, ServerOff, Menu, FolderKanban, Package, Cpu } from 'lucide-vue-next'
 import { useAppStore } from '../stores/app'
 import { useThemeStore } from '../stores/theme'
 import SettingsDrawer from './SettingsDrawer.vue'
@@ -117,6 +117,16 @@ const menuItems: MenuItem[] = [
     icon: FolderKanban,
     title: '项目管理', 
     path: '/projects',
+  },
+  { 
+    icon: Package,
+    title: 'NPM 仓库管理', 
+    path: '/npm',
+  },
+  {
+    icon: Cpu,
+    title: 'Node 版本管理',
+    path: '/node/versions',
   },
 ]
 

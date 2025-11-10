@@ -1,77 +1,129 @@
 <template>
   <div class="project-dev-page">
     <div class="page-header">
-      <button class="back-btn" @click="router.back()">
-        <ArrowLeft :size="20" />
-        返回
-      </button>
-      <h1>启动项目</h1>
-    </div>
-    <div class="page-content">
-      <div class="dev-layout">
-        <!-- 左侧控制区 -->
-        <div class="control-panel">
-          <div class="control-section">
-            <h3>操作</h3>
-            <div class="button-group">
+      <div class="page-header-top">
+        <div class="page-header-left">
+          <span class="back-icon" @click="router.back()" title="返回">
+            <ArrowLeft :size="20" />
+          </span>
+          <h1 class="page-title">
+            启动项目
+            <span v-if="currentViewingEnvironment" class="page-title-env-tag">
+              {{ getEnvironmentLabel(currentViewingEnvironment) }}
+            </span>
+          </h1>
+        </div>
+        <div class="page-header-right">
+          <!-- 操作按钮组 -->
+          <div class="header-button-group">
+            <!-- 运行环境下拉框（只在有运行中的环境时显示） -->
+            <RunningEnvironmentsDropdown
+              v-if="runningEnvironments.length > 0"
+              :running-environments="runningEnvironments"
+              :current-viewing-environment="currentViewingEnvironment"
+              @select="handleRunningEnvSelect"
+            />
+            
+            <!-- 环境选择器（用于启动新环境） -->
+            <EnvironmentSelect
+              v-model="selectedEnvironment"
+              :options="environmentOptions"
+              :disabled="loading"
+              title="选择要启动的环境"
+              @update:modelValue="handleEnvironmentSelect"
+            />
+            
+            <!-- 启动按钮 -->
+            <Tooltip
+              :content="isEnvironmentRunning(selectedEnvironment) ? '该环境正在运行中，请选择其他环境启动' : '启动选中的环境'"
+              placement="bottom"
+            >
               <button
-                class="btn btn-primary"
-                :disabled="isRunning || loading"
+                class="btn-icon btn-primary"
+                :disabled="isEnvironmentRunning(selectedEnvironment) || loading"
                 @click="handleStart"
               >
                 <Play :size="18" />
-                {{ isRunning ? '运行中...' : '启动' }}
               </button>
+            </Tooltip>
+            
+            <!-- 停止按钮 -->
+            <Tooltip
+              v-if="currentViewingEnvironment && isEnvironmentRunning(currentViewingEnvironment)"
+              content="停止当前环境"
+              placement="bottom"
+            >
               <button
-                class="btn btn-danger"
-                :disabled="!isRunning || loading"
+                class="btn-icon btn-danger"
+                :disabled="!currentViewingEnvironment || loading"
                 @click="handleStop"
               >
                 <Square :size="18" />
-                停止
               </button>
-            </div>
-          </div>
-
-          <!-- 服务地址 -->
-          <div v-if="serviceUrls.length > 0" class="service-section">
-            <h3>服务地址</h3>
-            <div class="service-urls">
-              <div
-                v-for="(url, index) in serviceUrls"
-                :key="index"
-                class="service-url-item"
+            </Tooltip>
+            
+            <!-- 打开按钮 -->
+            <Tooltip
+              v-if="currentViewingEnvironment && isEnvironmentRunning(currentViewingEnvironment) && primaryServiceUrl"
+              content="打开服务"
+              placement="bottom"
+            >
+              <button
+                class="btn-icon btn-success"
+                @click="handleOpen"
               >
-                <a :href="url" target="_blank" rel="noopener noreferrer">
-                  {{ url }}
-                  <ExternalLink :size="14" />
-                </a>
+                <ExternalLink :size="18" />
+              </button>
+            </Tooltip>
+            
+            <!-- 二维码按钮 -->
+            <div v-if="currentViewingEnvironment && isEnvironmentRunning(currentViewingEnvironment) && primaryServiceUrl" class="qr-code-dropdown-wrapper">
+              <Tooltip content="显示二维码" placement="bottom">
+                <button
+                  class="btn-icon btn-success"
+                  @click="toggleQRCodeDropdown"
+                >
+                  <QrCode :size="18" />
+                </button>
+              </Tooltip>
+              <!-- 二维码下拉框 -->
+              <div
+                v-if="showQRCodeDropdown"
+                class="qr-code-dropdown"
+                @click.stop
+              >
+                <div class="qr-code-dropdown-content">
+                  <canvas ref="qrCodeCanvas" class="qr-code-canvas"></canvas>
+                  <div class="qr-code-label">扫码访问</div>
+                  <div class="qr-code-url">{{ primaryServiceUrl }}</div>
+                </div>
               </div>
             </div>
-            <!-- 二维码 -->
-            <div v-if="primaryServiceUrl" class="qr-code-container">
-              <canvas ref="qrCodeCanvas" class="qr-code-canvas"></canvas>
-              <div class="qr-code-label">扫码访问</div>
-            </div>
           </div>
         </div>
-
-        <!-- 右侧控制台 -->
-        <div class="console-panel">
-          <Console ref="consoleRef" />
-        </div>
+      </div>
+      
+      <!-- 运行中的环境列表（已移到下拉框，这里移除） -->
+    </div>
+    <div class="page-content">
+      <!-- 控制台铺满整个区域 -->
+      <div class="console-panel">
+        <Console ref="consoleRef" />
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, Play, Square, ExternalLink } from 'lucide-vue-next'
+import { ArrowLeft, Play, Square, ExternalLink, QrCode, Server } from 'lucide-vue-next'
 import { projectApi } from '../api/services'
 import { useAppStore } from '../stores/app'
 import Console from '../components/Console.vue'
+import EnvironmentSelect from '../components/common/EnvironmentSelect.vue'
+import RunningEnvironmentsDropdown from '../components/common/RunningEnvironmentsDropdown.vue'
+import Tooltip from '../components/common/Tooltip.vue'
 import type { Socket } from 'socket.io-client'
 import QRCode from 'qrcode'
 
@@ -80,7 +132,6 @@ const router = useRouter()
 const appStore = useAppStore()
 
 const loading = ref(false)
-const isRunning = ref(false)
 const serviceUrls = ref<string[]>([]) // 存储所有服务地址
 const executionId = ref<string | null>(null)
 const consoleRef = ref<InstanceType<typeof Console> | null>(null)
@@ -88,8 +139,166 @@ const qrCodeCanvas = ref<HTMLCanvasElement | null>(null)
 let socket: Socket | null = null
 let room: string | null = null
 
+// 环境选择（从 URL 参数获取，如果没有则默认开发环境）
+// 注意：这里使用 computed 来响应式读取 route.query.env，确保刷新后能正确读取
+const selectedEnvironment = ref<'development' | 'production' | 'test' | 'staging' | 'preview'>('development')
+
+// 初始化时从 URL 读取环境
+if (route.query.env && ['development', 'production', 'test', 'staging', 'preview'].includes(route.query.env as string)) {
+  selectedEnvironment.value = route.query.env as any
+}
+
+// 当前查看的环境（用于显示日志）
+const currentViewingEnvironment = ref<string | null>(null)
+
+// 运行中的环境列表
+const runningEnvironments = ref<Array<{ environment?: string; executionId: string; serviceUrl?: string }>>([])
+
+// 可用环境列表
+const availableEnvironments = [
+  { value: 'development', label: '开发环境', icon: '🟢' },
+  { value: 'production', label: '生产环境', icon: '🔴' },
+  { value: 'staging', label: '预发布环境', icon: '🟡' },
+  { value: 'test', label: '测试环境', icon: '🔵' },
+  { value: 'preview', label: '预览环境', icon: '🟣' },
+]
+
+const environmentOptions = computed(() => {
+  return availableEnvironments.map(env => ({
+    value: env.value,
+    label: env.label,
+    icon: env.icon,
+    badge: isEnvironmentRunning(env.value) ? '运行中' : undefined,
+    disabled: false,
+  }))
+})
+
 // 计算主要服务地址（用于二维码，优先使用 network IP）
 const primaryServiceUrl = ref<string | null>(null)
+
+// 二维码下拉框显示状态
+const showQRCodeDropdown = ref(false)
+
+// 环境执行记录映射（environment -> executionId）
+const environmentExecutions = ref<Map<string, string>>(new Map())
+
+/**
+ * 获取环境标签
+ */
+function getEnvironmentLabel(env: string | null | undefined): string {
+  if (!env) return '开发环境'
+  const envMap: Record<string, string> = {
+    development: '开发环境',
+    production: '生产环境',
+    staging: '预发布环境',
+    test: '测试环境',
+    preview: '预览环境',
+  }
+  return envMap[env] || env
+}
+
+/**
+ * 检查环境是否正在运行
+ */
+function isEnvironmentRunning(env: string): boolean {
+  return runningEnvironments.value.some(e => (e.environment || 'development') === env)
+}
+
+/**
+ * 切换查看的环境
+ */
+async function switchEnvironment(env: string) {
+  currentViewingEnvironment.value = env
+  // 同步更新环境选择器（不触发 watch，避免重复调用）
+  isInitializing.value = true
+  selectedEnvironment.value = env as any
+  await nextTick()
+  isInitializing.value = false
+  
+  // 更新 URL
+  router.replace({ query: { ...route.query, env } })
+  
+  // 清空控制台
+  consoleRef.value?.clear()
+  
+  // 离开当前房间
+  leaveRoom()
+  
+  // 清空服务地址（先清空，避免显示旧环境的数据）
+  serviceUrls.value = []
+  primaryServiceUrl.value = null
+  showQRCodeDropdown.value = false
+  
+  // 查找该环境的执行记录
+  const envExecution = runningEnvironments.value.find(e => (e.environment || 'development') === env)
+  if (envExecution) {
+    // 环境正在运行，恢复状态
+    executionId.value = envExecution.executionId
+    if (envExecution.serviceUrl) {
+      serviceUrls.value = [envExecution.serviceUrl]
+      primaryServiceUrl.value = envExecution.serviceUrl
+    }
+    
+    // 加载该环境的日志
+    await loadEnvironmentLogs(env)
+    
+    // 连接到该环境的 WebSocket 房间
+    connectToRoom()
+  } else {
+    // 环境未运行，清空所有状态
+    executionId.value = null
+    serviceUrls.value = []
+    primaryServiceUrl.value = null
+    showQRCodeDropdown.value = false
+    consoleRef.value?.appendInfo(`环境 ${getEnvironmentLabel(env)} 未运行\n`)
+  }
+}
+
+/**
+ * 加载环境的日志
+ */
+async function loadEnvironmentLogs(env: string) {
+  try {
+    const response = await projectApi.getLatestExecution(projectId, 'dev', env)
+    if (response.success && response.data && response.data.output) {
+      consoleRef.value?.appendStdout(response.data.output)
+    }
+  } catch (error) {
+    console.error('加载环境日志失败:', error)
+  }
+}
+
+/**
+ * 刷新运行中的环境列表
+ */
+async function refreshRunningEnvironments() {
+  try {
+    const response = await projectApi.getRunningExecutions(projectId, 'dev')
+    if (response.success && response.data) {
+      runningEnvironments.value = response.data.map((exec: any) => ({
+        environment: exec.environment || 'development',
+        executionId: exec.id,
+        serviceUrl: exec.serviceUrl,
+      }))
+      
+      // 更新环境执行记录映射
+      environmentExecutions.value.clear()
+      runningEnvironments.value.forEach(env => {
+        environmentExecutions.value.set(env.environment || 'development', env.executionId)
+      })
+      
+      // 不在初始化阶段时，不要自动切换环境，保持用户选择的环境
+      // 自动切换逻辑应该在 checkRunningCommand 中处理
+    } else {
+      runningEnvironments.value = []
+      environmentExecutions.value.clear()
+    }
+  } catch (error) {
+    console.error('刷新运行环境列表失败:', error)
+    runningEnvironments.value = []
+    environmentExecutions.value.clear()
+  }
+}
 
 /**
  * 标准化 URL（统一格式以便比较）
@@ -260,8 +469,13 @@ async function generateQRCode() {
   if (!primaryServiceUrl.value || !qrCodeCanvas.value) return
   
   try {
+    // 固定 canvas 尺寸，避免布局混乱
+    const size = 200
+    qrCodeCanvas.value.width = size
+    qrCodeCanvas.value.height = size
+    
     await QRCode.toCanvas(qrCodeCanvas.value, primaryServiceUrl.value, {
-      width: 200,
+      width: size,
       margin: 2,
       color: {
         dark: '#000000',
@@ -270,6 +484,28 @@ async function generateQRCode() {
     })
   } catch (error) {
     console.error('生成二维码失败:', error)
+  }
+}
+
+/**
+ * 切换二维码下拉框显示状态
+ */
+function toggleQRCodeDropdown() {
+  showQRCodeDropdown.value = !showQRCodeDropdown.value
+  if (showQRCodeDropdown.value && primaryServiceUrl.value) {
+    // 显示下拉框时，确保二维码已生成
+    nextTick(() => {
+      generateQRCode()
+    })
+  }
+}
+
+/**
+ * 打开主要服务地址
+ */
+function handleOpen() {
+  if (primaryServiceUrl.value) {
+    window.open(primaryServiceUrl.value, '_blank', 'noopener,noreferrer')
   }
 }
 
@@ -287,6 +523,9 @@ let handleStatus: ((data: { executionId: string; status: string; serviceUrl?: st
 
 // 定期检查日志的定时器
 let logCheckInterval: NodeJS.Timeout | null = null
+
+// 点击外部关闭二维码下拉框的事件处理器
+let handleClickOutside: ((event: MouseEvent) => void) | null = null
 
 const projectId = route.params.id as string
 
@@ -397,12 +636,14 @@ function connectToRoom() {
     console.log('[WebSocket] 收到 command:status:', data)
     if (data.executionId === executionId.value) {
       if (data.status === 'running') {
-        isRunning.value = true
+        // 启动成功后刷新环境列表
+        refreshRunningEnvironments()
       } else if (data.status === 'completed' || data.status === 'failed' || data.status === 'stopped') {
-        isRunning.value = false
+        // 停止后刷新环境列表
+        refreshRunningEnvironments()
       }
       if (data.serviceUrl) {
-        serviceUrl.value = data.serviceUrl
+        addServiceUrl(data.serviceUrl)
       }
     } else {
       console.warn(`[WebSocket] executionId 不匹配: 期望 ${executionId.value}, 收到 ${data.executionId}`)
@@ -443,7 +684,7 @@ function connectToRoom() {
         clearInterval(logCheckInterval)
       }
       logCheckInterval = setInterval(() => {
-        if (isRunning.value && executionId.value) {
+        if (currentViewingEnvironment.value && isEnvironmentRunning(currentViewingEnvironment.value) && executionId.value) {
           loadLatestLogs()
         } else {
           // 如果项目已停止，清除定时器
@@ -507,7 +748,7 @@ function connectToRoom() {
         clearInterval(logCheckInterval)
       }
       logCheckInterval = setInterval(() => {
-        if (isRunning.value && executionId.value) {
+        if (currentViewingEnvironment.value && isEnvironmentRunning(currentViewingEnvironment.value) && executionId.value) {
           loadLatestLogs()
         } else {
           if (logCheckInterval) {
@@ -558,13 +799,14 @@ function leaveRoom() {
  * 启动项目
  */
 async function handleStart() {
-  if (!projectId || isRunning.value) return
+  if (!projectId || isEnvironmentRunning(selectedEnvironment.value)) return
 
   loading.value = true
   
   // 清空控制台并显示启动信息
   consoleRef.value?.clear()
-  consoleRef.value?.appendInfo('🚀 正在启动项目...\n')
+  const envLabel = getEnvironmentLabel(selectedEnvironment.value)
+  consoleRef.value?.appendInfo(`🚀 正在启动项目 (${envLabel})...\n`)
   serviceUrls.value = [] // 清空服务地址
   primaryServiceUrl.value = null
   
@@ -642,24 +884,17 @@ async function handleStart() {
       const targetId = executionId.value || tempExecutionId
       if (!targetId || data.executionId === targetId) {
         if (data.status === 'running') {
-          isRunning.value = true
+          // 启动成功后刷新环境列表
+          refreshRunningEnvironments()
         } else if (data.status === 'stopped' || data.status === 'completed' || data.status === 'failed') {
-          isRunning.value = false
+          // 停止后刷新环境列表
+          refreshRunningEnvironments()
           if (data.status === 'completed') {
             consoleRef.value?.appendInfo('\n✅ 命令执行完成\n')
           } else if (data.status === 'failed') {
             consoleRef.value?.appendError('\n❌ 命令执行失败\n')
           } else {
             consoleRef.value?.appendInfo('\n⏹️  命令已停止\n')
-          }
-        }
-        
-        // 更新服务地址（优先从 status 事件获取）
-        if (data.serviceUrl) {
-          const cleanedUrl = cleanUrl(data.serviceUrl)
-          if (cleanedUrl) {
-            addServiceUrl(cleanedUrl)
-            consoleRef.value?.appendInfo(`\n✅ 服务已启动: ${cleanedUrl}\n`)
           }
         }
       }
@@ -705,12 +940,18 @@ async function handleStart() {
     
     // 启动项目（此时监听器已经绑定，房间已加入）
     consoleRef.value?.appendInfo('⚡ 正在执行启动命令...\n\n')
-    const response = await projectApi.executeCommand(projectId, 'dev')
+    const response = await projectApi.executeCommand(projectId, 'dev', selectedEnvironment.value)
     
     if (response.success && response.data) {
       executionId.value = response.data.id
       tempExecutionId = response.data.id
-      isRunning.value = true
+      currentViewingEnvironment.value = selectedEnvironment.value
+      
+      // 更新 URL
+      router.replace({ query: { ...route.query, env: selectedEnvironment.value } })
+      
+      // 刷新环境列表
+      await refreshRunningEnvironments()
       
       consoleRef.value?.appendInfo(`📝 执行 ID: ${response.data.id}\n`)
       
@@ -736,7 +977,7 @@ async function handleStart() {
         clearInterval(logCheckInterval)
       }
       logCheckInterval = setInterval(() => {
-        if (isRunning.value && executionId.value) {
+        if (currentViewingEnvironment.value && isEnvironmentRunning(currentViewingEnvironment.value) && executionId.value) {
           loadLatestLogs()
         } else {
           if (logCheckInterval) {
@@ -748,7 +989,7 @@ async function handleStart() {
       
       // 3 秒后再次检查服务地址（有些服务启动较慢）
       setTimeout(() => {
-        if (isRunning.value && !serviceUrl.value) {
+        if (currentViewingEnvironment.value && isEnvironmentRunning(currentViewingEnvironment.value) && !primaryServiceUrl.value) {
           loadLatestLogs()
         }
       }, 3000)
@@ -758,9 +999,6 @@ async function handleStart() {
   } catch (error: any) {
     console.error('启动项目失败:', error)
     consoleRef.value?.appendError(`\n❌ 启动失败: ${error.message || '未知错误'}\n`)
-    isRunning.value = false
-    serviceUrls.value = []
-    primaryServiceUrl.value = null
     
     // 清理监听器
     if (appStore.socket) {
@@ -783,34 +1021,46 @@ async function handleStart() {
  * 停止项目
  */
 async function handleStop() {
-  if (!projectId || !executionId.value || !isRunning.value) return
+  if (!projectId || !executionId.value || !currentViewingEnvironment.value) return
 
   loading.value = true
-  consoleRef.value?.appendInfo('正在停止项目...\n')
+  const envLabel = getEnvironmentLabel(currentViewingEnvironment.value)
+  consoleRef.value?.appendInfo(`正在停止 ${envLabel}...\n`)
 
   try {
     const response = await projectApi.stopCommand(projectId, executionId.value)
     if (response.success) {
       // 立即清除前端状态
-      isRunning.value = false
+      const stoppedEnvironment = currentViewingEnvironment.value
       const stoppedExecutionId = executionId.value
       executionId.value = null
+      currentViewingEnvironment.value = null
       serviceUrls.value = []
       primaryServiceUrl.value = null
+      showQRCodeDropdown.value = false
       
       // 离开房间
       leaveRoom()
       
-      // 清空控制台
-      setTimeout(() => {
-        consoleRef.value?.clear()
-        consoleRef.value?.appendInfo('项目已停止\n')
-      }, 500)
+      // 刷新环境列表
+      await refreshRunningEnvironments()
+      
+      // 如果还有其他运行中的环境，切换到第一个
+      if (runningEnvironments.value.length > 0) {
+        const firstEnv = runningEnvironments.value[0].environment || 'development'
+        await switchEnvironment(firstEnv)
+      } else {
+        // 清空控制台
+        setTimeout(() => {
+          consoleRef.value?.clear()
+          consoleRef.value?.appendInfo('项目已停止\n')
+        }, 500)
+      }
       
       // 验证后端是否真的删除了记录（延迟检查，确保后端处理完成）
       setTimeout(async () => {
         try {
-          const checkResponse = await projectApi.getLatestExecution(projectId, 'dev')
+          const checkResponse = await projectApi.getLatestExecution(projectId, 'dev', stoppedEnvironment)
           if (checkResponse.success && checkResponse.data) {
             // 如果还有记录，说明删除失败
             console.warn(`[Stop] 停止后仍有运行记录: ${checkResponse.data.id}`)
@@ -830,12 +1080,8 @@ async function handleStop() {
   } catch (error: any) {
     console.error('停止项目失败:', error)
     consoleRef.value?.appendError(`停止失败: ${error.message || '未知错误'}\n`)
-    // 即使停止失败，也清除前端状态
-    isRunning.value = false
-    executionId.value = null
-    serviceUrls.value = []
-    primaryServiceUrl.value = null
-    leaveRoom()
+    // 即使停止失败，也刷新环境列表
+    await refreshRunningEnvironments()
   } finally {
     loading.value = false
   }
@@ -846,55 +1092,147 @@ async function handleStop() {
  */
 async function checkRunningCommand() {
   try {
-    const response = await projectApi.getLatestExecution(projectId, 'dev')
-    if (response.success && response.data) {
-      const execution = response.data
-      
-      // 先设置 executionId，再连接 WebSocket
-      executionId.value = execution.id
-      
-      // 恢复运行状态
-      isRunning.value = true
-      if (execution.serviceUrl) {
-        addServiceUrl(execution.serviceUrl)
-      }
-      
-      // 从输出中解析服务地址
-      if (execution.output) {
-        const parsedUrls = parseServiceUrlsFromLog(execution.output)
-        parsedUrls.forEach(url => addServiceUrl(url))
-      }
-      
-      // 清空控制台并显示历史输出
-      consoleRef.value?.clear()
-      
-      // 显示历史输出
-      if (execution.output) {
-        consoleRef.value?.appendStdout(execution.output)
-      }
-      
-      // 连接 WebSocket 房间（在设置 executionId 之后）
-      connectToRoom()
-    } else {
-      // 没有正在运行的命令，清空状态
+    // 先刷新运行中的环境列表
+    await refreshRunningEnvironments()
+    
+    // 优先使用 URL 中的环境参数（刷新后保持用户选择的环境）
+    const envFromUrl = route.query.env as string
+    const targetEnv = (envFromUrl && ['development', 'production', 'test', 'staging', 'preview'].includes(envFromUrl))
+      ? envFromUrl
+      : selectedEnvironment.value
+    
+    // 如果 URL 中的环境正在运行，切换到该环境
+    if (envFromUrl && runningEnvironments.value.some(e => (e.environment || 'development') === envFromUrl)) {
+      await switchEnvironment(envFromUrl)
+    } else if (runningEnvironments.value.length > 0) {
+      // 如果 URL 中的环境未运行，但其他环境在运行，优先保持 URL 中的环境（不自动切换）
+      // 设置当前查看的环境为 URL 中的环境
+      currentViewingEnvironment.value = targetEnv
       consoleRef.value?.clear()
       executionId.value = null
-      isRunning.value = false
       serviceUrls.value = []
       primaryServiceUrl.value = null
-      consoleRef.value?.appendInfo('没有正在运行的命令\n')
+      consoleRef.value?.appendInfo(`环境 ${getEnvironmentLabel(targetEnv)} 未运行\n`)
+    } else {
+      // 没有运行中的环境，设置当前查看的环境为 URL 中的环境或选中的环境
+      currentViewingEnvironment.value = targetEnv
+      consoleRef.value?.clear()
+      executionId.value = null
+      serviceUrls.value = []
+      primaryServiceUrl.value = null
+      consoleRef.value?.appendInfo(`环境 ${getEnvironmentLabel(targetEnv)} 未运行\n`)
     }
   } catch (error) {
     console.error('检查运行状态失败:', error)
     consoleRef.value?.clear()
     executionId.value = null
-    isRunning.value = false
-    serviceUrl.value = null
+    const envFromUrl = route.query.env as string
+    const targetEnv = (envFromUrl && ['development', 'production', 'test', 'staging', 'preview'].includes(envFromUrl))
+      ? envFromUrl
+      : selectedEnvironment.value
+    currentViewingEnvironment.value = targetEnv
+    serviceUrls.value = []
+    primaryServiceUrl.value = null
     consoleRef.value?.appendError('检查运行状态失败\n')
   }
 }
 
+// 处理运行环境下拉框选择
+async function handleRunningEnvSelect(env: string) {
+  // 同步更新环境选择器（不触发 watch，避免重复调用）
+  isInitializing.value = true
+  selectedEnvironment.value = env as any
+  await nextTick()
+  isInitializing.value = false
+  
+  // 切换到该环境（查看日志）
+  await switchEnvironment(env)
+}
+
+// 处理环境选择器选择
+async function handleEnvironmentSelect(env: string) {
+  // 刷新运行中的环境列表，获取最新状态
+  await refreshRunningEnvironments()
+  
+  // 检查该环境是否正在运行
+  if (isEnvironmentRunning(env)) {
+    // 环境正在运行，切换到查看该环境的日志
+    await switchEnvironment(env)
+  } else {
+    // 环境未运行，更新当前查看的环境（用于更新标题标签）
+    currentViewingEnvironment.value = env
+    // 更新 URL
+    router.replace({ query: { ...route.query, env } })
+    // 清空控制台和相关状态
+    consoleRef.value?.clear()
+    leaveRoom()
+    executionId.value = null
+    serviceUrls.value = []
+    primaryServiceUrl.value = null
+    showQRCodeDropdown.value = false
+    consoleRef.value?.appendInfo(`环境 ${getEnvironmentLabel(env)} 未运行\n`)
+  }
+}
+
+// 监听环境选择器变化，更新 URL
+const isInitializing = ref(true)
+watch(selectedEnvironment, async (newEnv, oldEnv) => {
+  // 跳过初始化时的触发
+  if (isInitializing.value) {
+    return
+  }
+  
+  // 更新 URL
+  router.replace({ query: { ...route.query, env: newEnv } })
+  
+  // 刷新运行中的环境列表，获取最新状态
+  await refreshRunningEnvironments()
+  
+  // 如果该环境正在运行，切换到查看该环境的日志
+  if (isEnvironmentRunning(newEnv)) {
+    await switchEnvironment(newEnv)
+  } else {
+    // 环境未运行，更新当前查看的环境（用于更新标题标签）
+    currentViewingEnvironment.value = newEnv
+    // 清空控制台和相关状态
+    consoleRef.value?.clear()
+    leaveRoom()
+    executionId.value = null
+    serviceUrls.value = []
+    primaryServiceUrl.value = null
+    showQRCodeDropdown.value = false
+    consoleRef.value?.appendInfo(`环境 ${getEnvironmentLabel(newEnv)} 未运行\n`)
+  }
+})
+
+// 在 onMounted 中设置初始化完成标志
 onMounted(async () => {
+  // 页面加载时，先清空所有状态和日志
+  consoleRef.value?.clear()
+  currentViewingEnvironment.value = null
+  executionId.value = null
+  serviceUrls.value = []
+  primaryServiceUrl.value = null
+  showQRCodeDropdown.value = false
+  
+  // 确保从 URL 参数读取环境（刷新后保持）
+  const envFromUrl = route.query.env as string
+  if (envFromUrl && ['development', 'production', 'test', 'staging', 'preview'].includes(envFromUrl)) {
+    selectedEnvironment.value = envFromUrl as any
+  } else {
+    // 如果 URL 中没有环境参数，添加默认环境到 URL
+    router.replace({ query: { ...route.query, env: selectedEnvironment.value } })
+  }
+  
+  // 点击外部关闭二维码下拉框
+  handleClickOutside = (event: MouseEvent) => {
+    const target = event.target as HTMLElement
+    if (!target.closest('.qr-code-dropdown-wrapper')) {
+      showQRCodeDropdown.value = false
+    }
+  }
+  document.addEventListener('click', handleClickOutside)
+  
   // 确保 WebSocket 已连接
   if (!appStore.socket || !appStore.isConnected) {
     appStore.connectWebSocket()
@@ -917,28 +1255,172 @@ onMounted(async () => {
     })
   }
 
-  // 检查是否有正在运行的命令
+  // 检查是否有正在运行的命令（支持多环境）
   await checkRunningCommand()
-})
-
-onUnmounted(() => {
-  leaveRoom()
+  
+  // 标记初始化完成，允许 watch 触发
+  isInitializing.value = false
+  
+  // 定期刷新运行中的环境列表（每5秒）
+  const refreshInterval = setInterval(() => {
+    refreshRunningEnvironments()
+  }, 5000)
+  
+  // 组件卸载时清理
+  onUnmounted(() => {
+    clearInterval(refreshInterval)
+    // 清理事件监听器
+    if (handleClickOutside) {
+      document.removeEventListener('click', handleClickOutside)
+      handleClickOutside = null
+    }
+    leaveRoom()
+  })
 })
 </script>
 
 <style scoped>
 .project-dev-page {
-  padding: var(--content-padding);
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  padding: 0;
   background: var(--content-bg);
   color: var(--color-text-primary);
-  min-height: 100%;
 }
 
 .page-header {
   display: flex;
+  flex-direction: column;
+  gap: var(--size-spacing-sm);
+  padding: var(--size-spacing-lg);
+  flex-shrink: 0;
+  background: var(--content-bg);
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+.page-header-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--size-spacing-md);
+}
+
+.page-header-left {
+  display: flex;
+  align-items: center;
+  gap: var(--size-spacing-sm);
+  flex: 1;
+  min-width: 0;
+}
+
+.back-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: color 0.2s ease;
+  flex-shrink: 0;
+}
+
+.back-icon:hover {
+  color: var(--color-text-primary);
+}
+
+.page-title {
+  display: flex;
+  align-items: center;
+  gap: var(--size-spacing-sm);
+  font-size: var(--font-size-lg);
+  font-weight: var(--size-font-weight-semibold);
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+  margin: 0;
+}
+
+.page-title-env-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  font-size: var(--font-size-xs);
+  font-weight: var(--size-font-weight-medium);
+  color: var(--color-text-secondary);
+  background: var(--color-bg-component);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--size-radius-sm);
+  white-space: nowrap;
+  flex-shrink: 0;
+  position: relative;
+  /* 书签效果：右上角小三角缺口 */
+  clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 8px, calc(100% - 8px) 100%, 0 100%);
+  padding-right: 14px;
+}
+
+@media (max-width: 768px) {
+  .page-title {
+    font-size: var(--font-size-base);
+  }
+  
+  .page-header-top {
+    flex-wrap: wrap;
+    gap: var(--size-spacing-sm);
+  }
+  
+  .page-header-left {
+    flex: 1;
+    min-width: 0;
+  }
+  
+  .page-header-right {
+    width: 100%;
+  }
+  
+  .header-button-group {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+}
+
+.page-header-right {
+  display: flex;
   align-items: center;
   gap: var(--size-spacing-md);
-  margin-bottom: var(--size-spacing-xl);
+}
+
+.header-button-group {
+  display: flex;
+  align-items: center;
+  gap: var(--size-spacing-sm);
+}
+
+
+.page-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+  width: 100%;
+  padding: 0;
+}
+
+.console-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
 }
 
 .back-btn {
@@ -960,32 +1442,13 @@ onUnmounted(() => {
   border-color: var(--theme-color-primary);
 }
 
-.page-header h1 {
-  font-size: var(--font-size-2xl);
-  font-weight: var(--size-font-weight-semibold);
-  margin: 0;
-  color: var(--color-text-primary);
-}
-
 .page-content {
   flex: 1;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-}
-
-.dev-layout {
-  display: flex;
-  gap: var(--size-spacing-lg);
-  height: calc(100vh - 200px);
-  min-height: 600px;
-}
-
-.control-panel {
-  flex: 0 0 300px;
-  display: flex;
-  flex-direction: column;
-  gap: var(--size-spacing-lg);
+  min-height: 0;
+  width: 100%;
 }
 
 .control-section,
@@ -1008,6 +1471,59 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: var(--size-spacing-sm);
+}
+
+/* 图标按钮样式 */
+.btn-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: none;
+  border-radius: var(--size-radius-md);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+}
+
+.btn-icon:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-icon.btn-primary {
+  background: var(--theme-color-primary);
+  color: white;
+}
+
+.btn-icon.btn-primary:hover:not(:disabled) {
+  background: var(--theme-color-primary-hover);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+}
+
+.btn-icon.btn-danger {
+  background: var(--color-danger-default, #ff4d4f);
+  color: white;
+}
+
+.btn-icon.btn-danger:hover:not(:disabled) {
+  background: var(--color-danger-hover, #ff7875);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+}
+
+.btn-icon.btn-success {
+  background: var(--color-success-default, #52c41a);
+  color: white;
+}
+
+.btn-icon.btn-success:hover:not(:disabled) {
+  background: var(--color-success-hover, #73d13d);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
 }
 
 .btn {
@@ -1051,6 +1567,81 @@ onUnmounted(() => {
   box-shadow: var(--shadow-md);
 }
 
+.btn-success {
+  background: var(--color-success-default, #52c41a);
+  color: white;
+}
+
+.btn-success:hover:not(:disabled) {
+  background: var(--color-success-hover, #73d13d);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+}
+
+/* 二维码下拉框 */
+.qr-code-dropdown-wrapper {
+  position: relative;
+  display: inline-block;
+}
+
+.qr-code-dropdown {
+  position: absolute;
+  top: calc(100% + var(--size-spacing-xs));
+  right: 0;
+  z-index: 1000;
+  background: var(--color-bg-container);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--size-radius-md);
+  box-shadow: var(--shadow-lg);
+  padding: var(--size-spacing-lg);
+  min-width: 250px;
+  max-width: 300px;
+  /* 确保下拉框不会超出视口 */
+  max-height: calc(100vh - 200px);
+  overflow: hidden;
+}
+
+.qr-code-dropdown-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--size-spacing-md);
+  width: 100%;
+}
+
+.qr-code-canvas {
+  display: block;
+  width: 200px !important;
+  height: 200px !important;
+  background: white;
+  padding: var(--size-spacing-sm);
+  border-radius: var(--size-radius-sm);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  flex-shrink: 0;
+}
+
+.qr-code-label {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  font-weight: var(--size-font-weight-medium);
+  text-align: center;
+  width: 100%;
+}
+
+.qr-code-url {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  word-break: break-all;
+  text-align: center;
+  max-width: 100%;
+  font-family: 'Courier New', 'Monaco', monospace;
+  padding: var(--size-spacing-xs);
+  background: var(--color-bg-component);
+  border-radius: var(--size-radius-sm);
+  width: 100%;
+  box-sizing: border-box;
+}
+
 .service-urls {
   display: flex;
   flex-direction: column;
@@ -1091,36 +1682,16 @@ onUnmounted(() => {
   text-decoration: underline;
 }
 
-.qr-code-container {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: var(--size-spacing-md);
-  background: var(--color-bg-component);
-  border: 1px solid var(--color-border-light);
-  border-radius: var(--size-radius-md);
-}
-
-.qr-code-canvas {
-  display: block;
-  background: white;
-  padding: var(--size-spacing-sm);
-  border-radius: var(--size-radius-sm);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-}
-
-.qr-code-label {
-  margin-top: var(--size-spacing-sm);
-  font-size: var(--font-size-xs);
-  color: var(--color-text-secondary);
-  font-weight: var(--size-font-weight-medium);
-}
 
 .console-panel {
   flex: 1;
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
 }
 </style>
 

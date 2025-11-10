@@ -3,6 +3,8 @@
     <SystemLayout>
       <router-view />
     </SystemLayout>
+    <!-- 全局消息提示组件 -->
+    <Message />
   </div>
 </template>
 
@@ -11,6 +13,7 @@ import { onMounted } from 'vue'
 import { useAppStore } from './stores/app'
 import { useThemeStore } from './stores/theme'
 import SystemLayout from './components/SystemLayout.vue'
+import Message from './components/common/Message.vue'
 
 const appStore = useAppStore()
 const themeStore = useThemeStore()

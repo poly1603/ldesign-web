@@ -57,7 +57,33 @@ export class ApiClient {
       clearTimeout(timeoutId)
 
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`)
+        // 尝试解析错误响应体
+        let errorMessage = `HTTP error! status: ${response.status}`
+        let errorDetails: any = null
+        
+        try {
+          const contentType = response.headers.get('content-type')
+          if (contentType && contentType.includes('application/json')) {
+            const errorData = await response.json()
+            if (errorData.message) {
+              errorMessage = errorData.message
+            }
+            errorDetails = errorData
+          } else {
+            const text = await response.text()
+            if (text) {
+              errorMessage = text
+            }
+          }
+        } catch (parseError) {
+          // 如果解析失败，使用默认错误信息
+          console.warn('Failed to parse error response:', parseError)
+        }
+        
+        const error = new Error(errorMessage) as any
+        error.status = response.status
+        error.response = { data: errorDetails, status: response.status }
+        throw error
       }
 
       // DELETE 请求可能返回 204 No Content，此时没有响应体

@@ -5,7 +5,7 @@ import { resolve } from 'path'
 export default defineConfig({
   plugins: [vue()],
   server: {
-    port: 5174, // 改为5174以匹配当前访问的端口
+    port: 8888, // 改为5174以匹配当前访问的端口
     host: '0.0.0.0',
     cors: true,
     proxy: {
@@ -33,6 +33,17 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': resolve(__dirname, 'src'),
+      // 添加 themes 目录的别名，确保 CSS 导入能正确解析
+      'themes': resolve(__dirname, '../themes'),
+    },
+  },
+  css: {
+    // 配置 PostCSS 的路径解析
+    postcss: {
+      // 确保 PostCSS 能正确解析相对路径
+      config: {
+        path: resolve(__dirname, 'postcss.config.js'),
+      },
     },
   },
 })

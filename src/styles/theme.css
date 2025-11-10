@@ -4,8 +4,9 @@
  */
 
 /* 引入主题变量 */
-@import '../../themes/color.css';
-@import '../../themes/size.css';
+/* 使用 postcss-import 插件，路径从项目根目录解析 */
+@import '../../../../themes/color.css';
+@import '../../../../themes/size.css';
 
 /* 主题色变量 */
 :root {
